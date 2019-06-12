@@ -16,4 +16,4 @@ The list of effects:
 - 2D Turing machine
 - Fire effect
 
-I thought that the source code years ago was lost, but I found it at [ZX Spectrum Open Source Web Project](http://opensourcezx.untergrund.net/b_demo-malady_src.html). Thanks Bugsy for keeping the history!
+I thought that the source code was lost, but I found it at [ZX Spectrum Open Source Web Project](http://opensourcezx.untergrund.net/b_demo-malady_src.html). Thanks Bugsy for keeping the history!
