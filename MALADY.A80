@@ -1,0 +1,2558 @@
+; Malady 4KB Intro
+; Coded by Megus/Brainwave^X-Project in August, 1999.
+; It is the contribution for CAFe'99 demoparty!
+; Coded in ZX ASM v3.0 on Speccy.
+; Optimized on PC using ASM80 cross-assembler.
+; Best viewed in DOS Navigator with C/C++
+; (and asm-typed comments) syntax highlighting :)
+
+*$      ; Compile to hobeta file (ASM80 keyword)
+
+; Initial definitions
+TG      equ #bd00  ; Destination for the TAN table
+COSINE  equ TG+256 ; Destination for the COS table
+ICOS    equ TG+512 ; Destination for the 1/COS table
+CHB     equ #b0    ; Base chunky address
+CHGFX   equ #7c00  ; Destination for unpacked chunky graphics (1KB)
+CHLINE  equ #8101  ; Repeated inner loop for chunky routine
+BLURL   equ #8322  ; Repeated "blur" inner loop
+SKYEND  equ #8327  ; Repeated rotozoomer inner loop
+FADELN  equ #8628  ; Repeated fade-out inner loop
+SKYTEX  equ #c000  ; Texture for rotozoomer is placed there
+CHBUF   equ #a800  ; Chunky buffer address
+CHBUF1  equ #9d00  ; X-Chunky buffer address (for 3D Engine)
+MULB    equ #8d    ; Base high byte for multiplication table
+TRACE   equ #c800  ; Destination for raytracing routines
+CLEARS  equ #d000  ; Routine that clears x-chunky buffer
+SCALES  equ #d300  ; Texture scaling routines are placed there (for 3D Engine)
+TEXTURE equ #c000  ; Textures for 3D Engine are placed there
+BLURTB  equ #7ac0  ; Precalculated "blur" table
+FADETAB equ #7a60  ; Precalculated fade-out table
+FIRETB  equ #7a70  ; Precalculated "fire" table
+TEMPTX  equ #7700  ; Temp address for textures
+MAP     equ #7900  ; Destination for map (for 3D Engine)
+VSIZE   equ #7800  ; Precalculated vertical sizes of lines (for 3D Engine)
+TBUF    equ #9000  ; First additional chunky buffer
+TBUF1   equ TBUF+#800 ; Second additional chunky buffer
+TBUF2   equ TBUF+#1000 ; Third additional chunky buffer
+ROTATAB equ TEMPTX ; Precalculated data for zoomrotator
+FIREL   equ #8322  ; Repeated "fire" inner loop
+
+; Intro code
+        org #6000
+;        di          ; Interrupts are disabled in decompressor
+        ld (insp+1),sp ; Save stack pointer
+        ld sp,#6000
+        ld ix,#1700    ; XH - videopage, XL - videopage mask
+        ld hl,#4000    ; Clear screen
+        ld de,#4001
+        ld bc,#1800
+        ld (hl),l
+        xor a
+        out (#fe),a
+        ldir
+        ld (hl),#46
+        ld bc,#2ff
+        ldir
+        ld hl,#4f4f    ; Set attributes for BW Logo
+        ld (#581e),hl
+        ld (#583e),hl
+        ld hl,BWLOGO   ; Print BW Logo
+        ld de,#401e
+        ld c,34
+I_1     ld b,8
+        ld a,e
+I_2     ldi
+        ldi
+        ld e,a
+        inc d
+        djnz I_2
+        ld de,#403e
+        dec c
+        jr nz,I_1
+        call DBSCR      ; Copy first videopage to the second one
+
+        ld hl,#8000     ; Set interrupt routine
+        ld a,h
+        ld i,a
+        im 2
+        ld b,l
+        ld a,#7b
+        ld (hl),a
+        inc hl
+        djnz $-2
+        ld (hl),a
+        ld l,a
+        ld h,a
+        ld (hl),#c3
+        ld hl,IMOB
+        ld (#7b7c),hl
+
+; Initialize data
+        ld de,VSIZE  ; Depack vertical sizes for 3D Engine
+        ld hl,VSTAB-1
+        xor a
+VSZ1    inc hl
+        ld b,(hl)
+        ld (de),a
+        inc de
+        djnz $-2
+        inc a
+        cp #10
+        jr nz,VSZ1
+INMP1   bit 0,e          ; Depack map for 3D Engine
+        jr nz,$+3
+        inc hl
+        xor a
+        rld
+        dec a
+        or #c0
+        ld (de),a
+        inc e
+        jr nz,INMP1
+        call FADBLT
+        ld h,CHB        ; Initialize all data for chunky routine
+        xor a
+INIT2   ld b,16
+        ld l,CHB
+        ld (hl),a
+        inc a
+        inc l
+        djnz $-3
+        inc h
+        and a
+        jr nz,INIT2
+INIT1   ld hl,CHUNKS    ; Build temp chunky data
+        ld de,CHB*256
+        ld b,32
+        ld a,(hl):rld:ld (de),a:inc de
+        ld a,(hl):rld:ld (de),a:inc de
+        inc hl
+        djnz $-11
+        ld h,d
+        ld l,b
+        ld e,b
+        ld bc,CHGFX     ; Build chunky graphics (1KB)
+INIT3   ld a,(de)
+        xor (hl)
+        and #f
+        xor (hl)
+        ld (bc),a
+        inc bc
+        inc l
+        ld a,l
+        and #f
+        jr nz,INIT3
+        inc e
+        ld a,e
+        and #f0
+        ld l,a
+        cp #40
+        jr nz,INIT3
+        ld hl,TG+#81   ; Depack TAN table (16 bit, 45-90 degrees)
+        exx
+        ld hl,TG2TAB
+        ld bc,#d
+        ld de,#f3
+INTG1   call INTG2
+        call INTG2
+        inc hl
+        cp #55
+        jr nz,INTG1
+        ld de,TG+#55
+        ld hl,TG_NON+19
+        ld bc,20
+        lddr
+        ld de,ICOS      ; Depack 1/COS table (8 bit, 0-45 degrees)
+        ld hl,ICOSTB-1
+        call INS1
+        ld de,COSINE    ; Depack COS table (8 bit, 0-90 degrees)
+        ld hl,COSTAB-1
+        call INS1
+        ld de,TG        ; Depack TAN table (8 bit, 0-45 degrees)
+        ld hl,TGTAB-1
+        ld bc,#6fa
+        call INS1+2
+
+        ld hl,CHINLP    ; Build chunky routine inner loop
+        ld de,CHLINE
+        ld bc,#f22
+        call AREPEAT
+        dec de
+        ld hl,CHEND1    ; And add the returning code
+        ldi
+        ldi
+        ei
+
+; 1st part: TEXT
+PART1   ld hl,BLURLP    ; Build "blur" inner loop
+        ld bc,#3f1e
+        call AREPEAT
+        ld a,#c9
+        ld (de),a
+        ld hl,TBUF      ; Clear all chunky buffers
+        ld de,TBUF+1
+        ld bc,#1fff
+        ld (hl),CHB
+        ldir
+        ld hl,ST_1      ; Intro text
+PAGER   ld a,(hl)
+        dec a
+        jr z,PAGERP
+        add a,2
+        jr z,APAGER
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ex de,hl
+STRING  ld (STR2+1),hl
+        ld (STR3+1),de
+        call BLURIN
+        ld b,8
+STR1    push bc
+        halt
+        call CHUNKEN
+        call BLUR
+STR2    ld hl,0
+STR3    ld de,0
+        call PUTS
+        pop bc
+        djnz STR1
+        ex de,hl
+        jr PAGER
+PAGERP  inc hl
+        push hl
+        call BLURER
+        call BLURER
+        pop hl
+        jr PAGER
+APAGER  ld a,9
+        ld (STRBL1-1),a
+        call BLURER
+        ld hl,S_CAFE     ; CAFe99 letters
+STRBLUR ld a,(hl)
+        and a
+        jr z,askip2
+        inc hl
+        push hl
+        call LADDR
+LETTAD  ld de,CHBUF+16
+        ld c,32
+LETTA1  ld a,(hl)
+        rrca
+        or (hl)
+        ld b,8
+        ex de,hl
+LETTA2  rlca
+        jr nc,LETTA3
+        ld (hl),CHB+15
+        inc l
+        ld (hl),CHB+15
+        inc l
+        ld (hl),CHB+15
+        inc l
+        ld (hl),CHB+15
+        jr $+5
+LETTA3  inc l
+        inc l
+        inc l
+        inc l
+        djnz LETTA2
+        ld a,c
+        ld c,32
+        add hl,bc
+        ld c,a
+        ex de,hl
+        ld a,c
+        and 3
+        dec a
+        jr nz,$+3
+        inc l
+        dec c
+        jr nz,LETTA1
+        call BLURER
+        pop hl
+        jr STRBLUR
+askip2  call BLURER
+        call BLURER
+
+; 2nd part: 3D WORLD
+PART2   ld de,#4545
+        call CLS
+        ld a,#10
+        call PAGE
+        ld hl,MULB*256   ; Build multiplication table (A*DE)
+        ld de,#10
+        ld (hl),#c9
+        ld l,e
+        ld c,1
+MUL1    ld b,8
+MUL2    rlc c
+        jr nc,$+5
+        ld (hl),#19     ; #19 - add hl,de
+        inc hl
+        ld (hl),#29     ; #29 - add hl,hl
+        inc hl
+        djnz MUL2
+        dec hl
+        ld (hl),#c9     ; #C9 - ret
+        ld a,l
+        and #f0
+        ld l,a
+        add hl,de
+        inc c
+        jr nz,MUL1
+        ld hl,CHEND     ; Modify chunky routine for x-chunky buffer
+        ld de,BLURL-2
+        ld bc,7
+        ldir
+        ld hl,TEXTR1    ; Depack textures
+        ld de,TEXTURE
+P22     ld a,CHB
+        rld
+        ld (de),a
+        inc de
+        rld
+        ld (de),a
+        inc hl
+        inc de
+        bit 1,d
+        jr z,P22
+        exx             ; Build textures with string "MALADY"
+        ld hl,MALSTR
+        exx
+P23     push de
+        ld de,TEMPTX
+        exx
+        ld c,(hl)
+        inc hl
+        ld b,(hl)
+        inc hl
+        push bc
+        exx
+        pop hl
+        ld c,16
+P24     ld a,(hl)
+        rrca
+        or (hl)
+        ex de,hl
+        ld b,8
+P25     rlca
+        jr c,$+9
+        ld (hl),#b0
+        inc l
+        ld (hl),#b0
+        jr $+7
+        ld (hl),#bd
+        inc l
+        ld (hl),#bd
+        inc l
+        djnz P25
+        ex de,hl
+        bit 4,e
+        jr nz,$+3
+        inc l
+        dec c
+        jr nz,P24
+        ex de,hl
+        pop de
+P26     ld a,(hl)
+        ld (de),a
+        inc de
+        ld a,l
+        add a,16
+        ld l,a
+        jr nc,P26
+        inc l
+        bit 4,l
+        jr z,P26
+        bit 3,d
+        jr z,P23
+        ld hl,TRACERS   ; Build raytracing routines
+        ld b,8
+P21     push bc
+        ld bc,#f0f
+        push hl
+        call AREPEAT
+        pop hl
+        ld bc,15
+        add hl,bc
+        ld e,0
+        inc d
+        pop bc
+        djnz P21
+        ex de,hl       ; Build x-chunky clearing routine
+        ld b,32
+        ld (hl),#c5
+        inc l
+        djnz $-3
+        ex de,hl
+        ld hl,CLEND
+        ld bc,5
+        ldir
+        ld l,c
+        ld h,d
+        ld bc,555
+        ldir
+        ex de,hl
+        ld (hl),#eb
+        inc hl
+        ld (hl),#e9
+        ld de,SCALTB    ; Build texture scaling routines
+        exx
+        ld hl,SCALES
+        ld c,16
+        ld d,#20
+P29     ld b,d
+        exx
+        ex de,hl
+        ld c,(hl)
+        inc hl
+        ld b,(hl)
+        inc hl
+        ld de,0
+        ex de,hl
+        exx
+P210    ld (hl),#ed   ; #ED,#A0 - ldi
+        inc l
+        ld (hl),#a0
+        inc l
+        ld a,b
+        dec a
+        jr nz,$+6
+        ld (hl),#c9
+        jr P211+2
+        exx
+        ld a,h
+        add hl,bc
+        sub h
+        neg
+        dec a
+        exx
+        ld (hl),#14   ; #14 - inc d
+        inc hl
+        jr z,P211
+        bit 7,a
+        jr z,$+7
+        ld (hl),#2d   ; #2d - dec l
+        inc l
+        jr P211
+        dec a
+        jr nz,$+7
+        ld (hl),#2c   ; #2c - inc l
+        inc l
+        jr P211
+        inc a
+        ld (hl),#7d   ; #7d - ld a,l
+        inc l
+        ld (hl),#c6   ; #c6,#nn - add a,nn
+        inc l
+        ld (hl),a
+        inc l
+        ld (hl),#6f   ; #6f - ld l,a
+        inc l
+P211    djnz P210
+        dec d
+        dec d
+        ld l,0
+        inc h
+        dec c
+        jr nz,P29
+        ld hl,CHBUF1            ; Change chunky buffer address
+        ld (CHUNKEB+1),hl
+
+P21E    ld a,(noter+1)          ; Wait for the end of drumloop
+        cp #1f
+        jr nz,P21E
+        ld hl,_dpat2            ; Change drumloop
+        ld (loopp+1),hl
+        xor a                   ; Turn on autopilot for 3D Engine
+        ld (pil3d+1),a
+
+PT2_2   ld a,#10                ; Draw floor and ceiling
+        call PAGE
+        ld (PCL1+1),sp
+        ld sp,CHBUF1+#1f5f
+        ld bc,#b2b2
+        ld de,PCL1
+        jp CLEARS
+PCL1    ld sp,0
+        ld (PCL2+1),sp
+        ld sp,CHBUF1+#f4f
+        ld bc,#b4b4
+        ld de,PCL2
+        jp CLEARS
+PCL2    ld sp,0
+
+; 3D Engine! Based on raytracing.
+; I'm not going to describe all the raytracing algorithm
+; here, hope you know it :) I just comment on it
+        push ix
+        xor a
+        ld (scelx+1),a
+        ld ix,#f0f0     ; Coordinates inside the block (XH - y, XL - x)
+pixy    equ $-2
+        ld b,64
+        ld de,#d7a0     ; D - map coords #YX, E - angle (0-255)
+angle   equ $-2
+blxy    equ $-1
+        ld a,xl         ; Combine coords (YH - #Yy, YL - #Xx)
+        xor d
+        and #f0
+        xor d
+        rlca
+        rlca
+        rlca
+        rlca
+        ld yl,a
+        ld a,xh
+        rlca
+        rlca
+        rlca
+        rlca
+        xor d
+        and 15
+        xor d
+        ld yh,a
+EL1     push bc
+        push de
+        ld a,b
+        ld (scelc+1),a
+        ld hl,EL2        ; Return address
+        push hl
+        ld c,#20
+        ld a,e          ; Detect sector of current ray angle
+        add a,c         ; All "circle" of angles is divided
+        jp c,Esec7      ; into 8 sectors. I don't use standard
+        add a,c         ; angle measure (360 degrees), I use
+        jp c,Esec6      ; my own system that is better to code:
+        add a,c         ; 256 "degrees"
+        jp c,Esec5      ;
+        add a,c         ; \ 7|0 /
+        jp c,Esec4      ;  \ | /
+        add a,c         ; 6 \|/ 1
+        jp c,Esec3      ;----+----
+        add a,c         ; 5 /|\ 2
+        jp c,Esec2      ;  / | \
+        add a,c         ; / 4|3 \
+        jp c,Esec1
+Esec0   ld b,d          ; To make the raytracing much faster
+        ld a,e          ; I "jump" throw the whole blocks
+        ld (tang0+1),a  ; and to begin "jumping" I should
+        ld d,TG/256     ; calculate the new coordinates
+        ld a,(de)       ; on the block's edge: X' and Y'
+        ld c,a          ;       X',Y'
+        ld e,xh         ; +------*---+--> X axis
+        ld d,0          ; |     /    |
+        call MUL_ADE    ; | X,Y/     |
+        ld de,#fff0     ; |   *      |
+        ld l,b          ; |          |
+        ld b,#f         ; +----------+
+        ld a,xl         ; |
+        add a,h         ; Y axis
+        jr nc,$+3
+        inc l           ; X'=X+(Y-Y')*tg a
+        ld h,MAP/256
+        jp TRACE        ; Trace the ray
+Esec1   ld b,a
+        ld a,c
+        sub b
+        ld l,a
+        ld (tang1+1),a
+        ld b,d
+        ld h,TG/256
+        ld c,(hl)
+        ld a,xl
+        neg
+        ld e,a
+        ld d,0
+        jr nz,$+3
+        inc d
+        ld a,c
+        call MUL_ADE
+        ld de,#fff0
+        ld l,b
+        ld b,0
+        ld a,xh
+        sub h
+        jr nc,$+3
+        add hl,de
+        ld h,MAP/256
+        jp TRACE+#100
+sec11   add a,c         ; Sometimes "hard" intersections occurs:
+        ld c,a          ; +---+---+ We began to trace from "1"
+        ld a,(tang1+1)  ; |   |  /3 Tracer detects intersection at "3"
+        rlca            ; +---+-2-+ but the real intersection point
+        add a,#40       ; |  1|/  | is "2". This routine calculates
+        push hl         ; +---+---+ coordinates of this point
+        ld l,a
+        ld h,TG/256
+        ld e,(hl)
+        inc l
+        ld d,(hl)
+        ld a,c
+        rlca
+        rlca
+        rlca
+        rlca
+        and 15
+        call MUL_ADE
+        ld a,h
+        rlca
+        rlca
+        rlca
+        rlca
+        and #f0
+        pop hl
+        ld b,a
+lsec12  ld d,(hl)       ; This routine prepare data
+        and #f0         ; for length calculation
+        ld e,a
+        push de
+        ld a,l
+        and #f
+        or b
+        rlca
+        rlca
+        rlca
+        rlca
+        sub yl
+tang1   ld hl,ICOS
+        jp SCEL2
+Esec2   ld b,d
+        ld l,a
+        ld (tang1+1),a
+        ld h,TG/256
+        ld c,(hl)
+        ld a,xl
+        neg
+        ld e,a
+        ld d,0
+        jr nz,$+3
+        inc d
+        ld a,c
+        call MUL_ADE
+        ld de,#10
+        ld l,b
+        ld b,d
+        ld a,xh
+        add a,h
+        jr nc,$+3
+        add hl,de
+        ld h,MAP/256
+        jp TRACE+#200
+sec21   sub c
+        neg
+        jp sec11+1
+Esec3   ld b,a
+        ld a,c
+        sub b
+        ld l,a
+        ld (tang2+1),a
+        ld b,d
+        ld h,TG/256
+        ld c,(hl)
+        ld a,xh
+        neg
+        ld e,a
+        ld d,0
+        jr nz,$+3
+        inc d
+        ld a,c
+        call MUL_ADE
+        ld de,#10
+        ld l,b
+        ld b,d
+        ld a,xl
+        add a,h
+        jr nc,$+3
+        inc l
+        ld h,MAP/256
+        jp TRACE+#300
+sec31   sub c
+        neg
+        ld c,a
+        ld a,(tang2+1)
+        rlca
+        add a,#40
+        push hl
+        ld l,a
+        ld h,TG/256
+        ld e,(hl)
+        inc l
+        ld d,(hl)
+        ld a,c
+        rlca
+        rlca
+        rlca
+        rlca
+        and 15
+        call MUL_ADE
+        ld a,h
+        and 15
+        pop hl
+        ld b,a
+        rlca
+        rlca
+        rlca
+        rlca
+lsec34  ld d,(hl)
+        and #f0
+        ld e,a
+        push de
+        ld a,l
+        and #f0
+        or b
+        sub yh
+tang2   ld hl,ICOS
+        jp SCEL2
+Esec4   ld b,d
+        ld l,a
+        ld (tang2+1),a
+        ld h,TG/256
+        ld c,(hl)
+        ld a,xh
+        neg
+        ld e,a
+        ld d,0
+        jr nz,$+3
+        inc d
+        ld a,c
+        call MUL_ADE
+        ld de,#10
+        ld l,b
+        ld b,d
+        ld a,xl
+        sub h
+        jr nc,$+3
+        dec l
+        ld h,MAP/256
+        jp TRACE+#400
+sec41   add a,c
+        jp sec31+3
+Esec5   ld b,a
+        ld a,c
+        sub b
+        ld l,a
+        ld (tang3+1),a
+        ld b,d
+        ld h,TG/256
+        ld c,(hl)
+        ld e,xl
+        ld d,0
+        ld a,c
+        call MUL_ADE
+        ld de,#10
+        ld l,b
+        ld b,#f0
+        ld a,xh
+        add a,h
+        jr nc,$+3
+        add hl,de
+        ld h,MAP/256
+        jp TRACE+#500
+sec61   neg
+sec51   ld c,a
+        ld a,(tang3+1)
+        rlca
+        add a,#40
+        push hl
+        ld l,a
+        ld h,TG/256
+        ld e,(hl)
+        inc l
+        ld d,(hl)
+        ld a,c
+        rlca
+        rlca
+        rlca
+        rlca
+        and 15
+        call MUL_ADE
+        ld a,h
+        rlca
+        rlca
+        rlca
+        rlca
+        and #f0
+        pop hl
+        ld b,a
+lsec56  ld d,(hl)
+        and #f0
+        ld e,a
+        push de
+        ld a,l
+        and #f
+        or b
+        rlca
+        rlca
+        rlca
+        rlca
+        ld c,a
+        ld a,yl
+        sub c
+tang3   ld hl,ICOS
+        jp SCEL2
+Esec6   ld b,d
+        ld l,a
+        ld (tang3+1),a
+        ld h,TG/256
+        ld c,(hl)
+        ld e,xl
+        ld d,0
+        ld a,c
+        call MUL_ADE
+        ld de,#fff0
+        ld l,b
+        ld b,e
+        ld a,xh
+        sub h
+        jr nc,$+3
+        add hl,de
+        ld h,MAP/256
+        jp TRACE+#600
+Esec7   ld b,a
+        ld a,c
+        sub b
+        ld e,a
+        ld (tang0+1),a
+        ld b,d
+        ld d,TG/256
+        ld a,(de)
+        ld c,a
+        ld e,xh
+        ld d,0
+        call MUL_ADE
+        ld de,#fff0
+        ld l,b
+        ld b,#f
+        ld a,xl
+        sub h
+        jr nc,$+3
+        dec l
+        ld h,MAP/256
+        jp TRACE+#700
+sec71   neg
+        ld c,a
+        ld a,(tang0+1)
+        rlca
+        add a,#40
+        push hl
+        ld l,a
+        ld h,TG/256
+        ld e,(hl)
+        inc l
+        ld d,(hl)
+        ld a,c
+        rlca
+        rlca
+        rlca
+        rlca
+        and 15
+        call MUL_ADE
+        ld a,h
+        and 15
+        pop hl
+        ld b,a
+        rlca
+        rlca
+        rlca
+        rlca
+lsec70  ld d,(hl)
+        and #f0
+        ld e,a
+        push de
+        ld a,l
+        and #f0
+        or b
+        ld c,a
+        ld a,yh
+        sub c
+tang0   ld hl,ICOS
+SCEL2   ld e,(hl)       ; Calculate length of the ray
+        ld d,1
+        call MUL_ADE
+        ld a,h
+        rlc l
+        adc a,0
+        ld e,a
+        ld d,0
+scelc   ld a,0
+        sub 32
+        jr nc,$+4
+        neg
+        ld l,a
+        ld h,COSINE/256 ; Correct non-linear distortion
+        ld a,(hl)
+        call MUL_ADE
+        ld a,h
+        rlc l
+        adc a,0
+        ld l,a
+        ld h,VSIZE/256  ; Get the precalculated vertical size
+        ld c,(hl)
+        ld a,c
+scelx   add a,0
+        ld e,a
+        ld a,c
+        add a,CHBUF1/256
+        ld d,a
+        ld a,c
+        add a,SCALES/256
+        ld h,a
+        ld l,0
+        ex (sp),hl
+        ret             ; Jump to scaling routine
+EL2
+        pop de
+        pop bc
+        ld hl,scelx+1
+        inc (hl)
+        inc e
+        dec b
+        jp nz,EL1
+        pop ix
+; Ughhh! It is finished :)))
+
+        halt
+        call CHUNKEN
+        ld a,(APILE+1)  ; Waiting for the end of moving
+        and a
+        jp nz,PT2_2
+
+; 3rd part: MOTION BLURED ZOOMROTATOR
+PART3   ld (pil3d+1),a  ; Turn off 3d-mover
+        ld hl,CHEND1    ; Modify chunky routine for normal buffer
+        ld de,BLURL-2
+        ldi
+        ldi
+        ld de,#4747
+        call CLS
+        ld a,#10
+        call PAGE
+        ld hl,MULB*256+#500 ; Move the part of multiplication table
+        ld de,MULB*256      ; to free the memory for additional
+        ld bc,#b00          ; chunky buffers
+        ldir
+        call ROTCLC         ; Calculate all data for zoomrotator
+
+P3B     ld a,(noter+1)
+        cp #1f
+        jr nz,P3B
+        ld hl,_dpat3
+        ld (loopp+1),hl
+        xor a
+        ld (thucnt+1),a
+
+P3LP    call ROTATER
+        ld hl,P3MY1+1       ; Change X and Y
+        inc (hl)
+        ld hl,P3MX1+1
+        dec (hl)
+        dec (hl)
+        dec (hl)
+        ld a,(thucnt+1)     ; Synchronizing :)
+        cp 120
+        jr c,P3LP
+
+; 4th part: THURING MACHINE
+PART4   ld hl,_dpat4
+        ld (loopp+1),hl
+        ld ix,#1700
+        call DBSCR
+        xor a
+        ld (scrchf+1),a
+        ld b,6
+        ld hl,THTAB
+P41     push bc
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld a,(hl)
+        inc hl
+        push hl
+        ld h,(hl)
+        ld l,a
+THURMIT push hl         ; Thuring machine code
+        push de
+        call CLS1
+        pop de
+        call CLS
+        pop hl
+THURMI1 ld a,(noter+1)
+        and a
+        jr nz,THURMI1
+        ld (THURD+1),a
+        ld (thucnt+1),a
+        ld (thuret+1),a
+        ld c,a
+        ld de,#4890
+        ld yl,#80
+THURLP
+thuret  ld a,0
+        and a
+        jp nz,askip1
+        push hl
+        ld b,0
+        add hl,bc
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a
+        ld a,(de)
+        and yl
+        jr z,$+3
+        inc b
+        set 7,d
+        ld a,(de)
+        and yl
+        jr z,$+4
+        inc b
+        inc b
+THL1    ld c,(hl)
+        inc hl
+        inc hl
+        xor a
+        rlc c
+        rla
+        rlc c
+        rla
+        cp b
+        jr nz,THL1
+        dec hl
+        ex de,hl
+        ld a,yl
+        cpl
+        and (hl)
+        rlc c
+        jr nc,$+4
+        or yl
+        ld (hl),a
+        res 7,h
+        ld a,yl
+        cpl
+        and (hl)
+        rlc c
+        jr nc,$+4
+        or yl
+        ld (hl),a
+        ex de,hl
+        xor a
+        rlc c
+        rla
+        rlc c
+        rla
+        ld c,(hl)
+        dec a
+THURD   add a,0
+        and 3
+        ld (THURD+1),a
+        jr z,THRG
+        dec a
+        jr z,THDW
+        dec a
+        jr z,THLF
+THUP    ld a,d
+        dec d
+        and 7
+        jr nz,THUP1
+        ld a,e
+        sub 32
+        ld e,a
+        jr c,THUP1
+        ld a,d
+        add a,8
+        ld d,a
+THUP1   pop hl
+        jr THURLP
+THRG    ld a,yl
+        rrca
+        ld yl,a
+        jr nc,THUP1
+        inc e
+        jr THUP1
+THLF    ld a,yl
+        rlca
+        ld yl,a
+        jr nc,THUP1
+        dec e
+        jr THUP1
+THDW    inc d
+        ld a,d
+        and 7
+        jr nz,THUP1
+        ld a,e
+        add a,32
+        ld e,a
+        jr c,THUP1
+        ld a,d
+        sub 8
+        ld d,a
+        jr THUP1
+askip1  pop hl
+        inc hl
+        pop bc
+        dec b
+        jp nz,P41
+        call CLS1
+
+; 5th part: KOLBASING TEXT :))) (don't try to understand this title :) )
+PART5   ld a,#42
+        ld (scrchf+1),a
+        ld d,a
+        ld e,#46
+        call CLS
+        ld hl,TBUF1     ; Clear chunky buffers
+        ld de,TBUF1+1
+        ld bc,#17ff
+        ld (hl),CHB
+        ldir
+        ld hl,FIRETB    ; Build "fire" table
+        ld a,#b0
+        ld b,5
+        ld (hl),a
+        inc l
+        djnz $-2
+P52     ld b,5
+        ld (hl),a
+        inc l
+        djnz $-2
+        inc a
+        cp #bf
+        jr nz,P52
+        ld hl,FIREIL    ; Build "fire" inner loop
+        ld de,FIREL
+        ld bc,#3f17
+        call AREPEAT
+        ld a,#c9
+        ld (de),a
+
+P5P     ld a,(noter+1)
+        cp #1f
+        jr nz,P5P
+        ld hl,_dpat5
+        ld (loopp+1),hl
+
+        ld hl,MALEP     ; Outro text
+P51     ld a,(hl)
+        inc a
+        jp z,P5_A
+        ld e,a
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld (P5A+1),hl
+        ld b,8
+P58     push de
+        push bc
+PRND1   ld c,56         ; ! Random number generator
+PRND2   ld a,89         ; !
+        ld (PRND1+1),a  ; !
+        add a,c         ; !
+        ld c,a          ; !
+PRND3   ld a,43         ; !
+        ld (PRND2+1),a  ; !
+        add a,c         ; !
+        rlca            ; !
+        ld (PRND3+1),a  ; !
+        ld c,a          ; !
+        and 3
+        dec a
+        add a,e
+        ld l,a
+        ld a,c
+        and #60
+        rlca
+        sub #40
+        add a,l
+        ld l,a
+        ld h,d
+P5A     ld de,0
+        call PUTS
+P54     push de
+        call FIRER
+        pop hl
+        pop bc
+        pop de
+        ld a,d
+        xor #38
+        ld d,a
+        dec b
+        jp nz,P58
+        jp P51
+P5_A    ld b,10
+        push bc
+        call FIRER
+        pop bc
+        djnz P5_A+2
+
+; 6th part: THE END
+PART6   ld de,#4747
+        call CLS
+        ld a,#10
+        call PAGE
+        ld hl,FINTX     ; Modify text source for texture builder
+        ld (RTXT+1),hl
+        call FADBLT     ; Build data for fader
+        call ROTCLC     ; Calculate data for zoomrotator
+        ld a,#38        ; Modify zoomrotator routine
+        ld (P3MX1+1),a
+        ld a,8
+        ld (P3MY1+1),a
+        ld (P3RSPD+1),a
+        xor a
+        ld (P3ANG+1),a
+        dec a
+        ld (P3FL1+1),a
+        ld a,#ae
+        ld (P3MAGN+1),a
+        ld a,2
+        ld (P3D+1),a
+
+        ld a,(noter+1)
+        cp #1f
+        jr nz,$-5
+        ld hl,_dpat6
+        ld (loopp+1),hl
+
+        ld b,64         ; Rotate THE END string
+P6LP    push bc
+        call ROTATER
+        pop bc
+        djnz P6LP
+        ld a,#18
+        ld (P3CHC),a
+        ld a,21
+        ld (P3CHC+1),a
+        xor a
+        ld (P3RSPD+1),a
+        ld b,32
+P6LP1   push bc         ; Scale it
+        call ROTATER
+        pop bc
+        ld hl,P3MAGN+1
+        inc (hl)
+        inc (hl)
+        inc (hl)
+        inc (hl)
+        djnz P6LP1
+        ld b,16         ; Wait a bit
+P6LP2   push bc
+        call ROTATER
+        pop bc
+        djnz P6LP2
+        ld a,(noter+1)  ; Wait for pattern break
+        and a
+        jr nz,$-4
+        ld xl,a
+        ld a,#10
+        call PAGE
+        ld a,7          ; SPLASH!
+        out (#fe),a
+        ld hl,#5800
+        ld de,#5801
+        ld bc,#2ff
+        ld (hl),#3f
+        ldir
+        halt
+        xor a
+        out (#fe),a
+        ld hl,#5800
+        ld de,#5801
+        ld bc,#2ff
+        ld (hl),l
+        ldir
+        ld b,4
+        halt
+        djnz $-1
+
+; Exit from intro
+EXIT    di
+insp    ld sp,0
+        ld hl,AYREG
+        ld de,AYREG+1
+        ld bc,13
+        ld (hl),b
+        ldir
+        call OUTAY
+        ld hl,#2758
+        ld iy,#5c3a
+        exx
+        ld a,#3f
+        ld i,a
+        im 1
+; Special exit code for CAFe
+        ld a,#10
+        ld bc,#7ffd
+        out (c),a
+        in a,(#fb)
+        ld hl,#3ffe
+        ld a,(hl)
+        cp "E"
+        jr nz,$+9
+        inc hl
+        ld a,(hl)
+        cp "T"
+        jp z,0
+        in a,(#7b)
+        ei
+        ret
+
+; Copy videopages 1->2
+DBSCR   ld a,#17
+        call PAGE
+        ld hl,#4000
+        ld de,#c000
+        ld bc,#1b00
+        ldir
+        ret
+
+; DE=-DE
+NEGDE   push hl
+        ld hl,0
+        and a
+        sbc hl,de
+        ex de,hl
+        pop hl
+        ret
+
+; Initialize "blur" routine
+BLURIN  ld hl,CHBUF
+        ld de,TBUF
+        ld a,d
+        ld bc,#800
+        ld (BLUR+3),a
+        add a,b
+        ld (BLUR1+2),a
+        add a,b
+        ld (BLUR2+2),a
+        ldir
+        ret
+
+; "Blur"
+BLURER  call BLURIN
+        ld b,4
+STRBL1  push bc
+        halt
+        call CHUNKEN
+        call BLUR
+        pop bc
+        djnz STRBL1
+        ret
+
+; Calculate an address of a letter in ROM font
+LADDR   ld l,a
+        ld h,0
+        add hl,hl
+        add hl,hl
+        ld a,h
+        add a,#3c
+        ld h,a
+        ret
+
+; Put string to chunky buffer
+PUTS    ld a,(de)
+        inc de
+        and a
+        ret z
+        push hl
+        exx
+        call LADDR
+        pop de
+        ld c,8
+PUTS1   ld a,(hl)
+        rra
+        or (hl)
+        ld b,8
+        ex de,hl
+PUTS2   rlca
+        jr nc,$+4
+        ld (hl),CHB+15
+        inc hl
+        djnz PUTS2
+        ld a,c
+        ld c,#38
+        add hl,bc
+        ld c,a
+        ex de,hl
+        inc hl
+        dec c
+        jr nz,PUTS1
+        exx
+        ld a,l
+        add a,8
+        ld l,a
+        jr PUTS
+
+; Interrupt handler
+IMOB    push af
+        push bc
+        push de
+        push hl
+        push iy
+
+pil3d   ld a,1          ; Auto-pilot for 3D Engine flag
+        and a
+        jp nz,askip
+APILOT  ld a,1          ; Auto-pilot for 3D Engine
+        dec a
+        ld (APILOT+1),a
+        jr nz,APILEX
+        ld a,32
+        ld (APILOT+1),a
+APIL2   ld a,#10
+        sub #10
+        ld (APIL2+1),a
+        jr nz,APILEX
+APIL1   ld hl,LETALKA
+        ld a,(hl)
+        inc hl
+        ld (APIL1+1),hl
+        and a
+        jr nz,$+10
+        ld (APILE+1),a
+APILE   ld a,1
+        jp askip
+        ld c,a
+        and #f0
+        ld (APIL2+1),a
+        ld a,c
+        and #f
+        ld hl,AP_TL
+        jr z,APIL3
+        dec a
+        ld hl,AP_TR
+        jr z,APIL3
+        dec a
+        ld hl,AP_LF
+        jr z,APIL3
+        dec a
+        ld hl,AP_RG
+        jr z,APIL3
+        dec a
+        ld hl,AP_UP
+        jr z,APIL3
+        ld hl,AP_DW
+APIL3   ld (APILEX1+1),hl
+APILEX  ld hl,(pixy)
+        ld de,(angle)
+APILEX1 call 0
+        ld (pixy),hl
+        ld (angle),de
+askip
+
+; Drum machine
+        ld iy,#10db
+dicnt   ld a,1
+        dec a
+        ld (dicnt+1),a
+        jp nz,playt
+        ld a,6
+        ld (dicnt+1),a
+envnote ld c,0
+envcn   ld a,8
+        and a
+        jr nz,$+5
+        ld c,a
+        ld a,8
+        dec a
+        ld (envcn+1),a
+        ld a,c
+        ld hl,#34f
+        ld e,#6a
+        and a
+        jr z,dt1
+        ld hl,#1a8
+        ld e,#35
+        dec a
+        jr z,dt1
+        ld hl,#1dc
+        ld e,#3c
+dt1     ld (AYREG),hl
+        ld a,e
+        ld (AYREG+11),a
+        ld iy,#cda
+        ld a,c
+        inc a
+        cp 3
+        jr nz,$+3
+        xor a
+        ld (envnote+1),a
+noter   ld a,0
+        inc a
+        ld (noter+1),a
+notcnt  ld a,#10
+        sub #10
+        ld (notcnt+1),a
+        jr nz,playt
+patad   ld hl,_dpat0
+        bit 7,(hl)
+        jr z,$+9
+loopp   ld hl,_dpat1
+        xor a
+        ld (noter+1),a
+        ld a,(hl)
+        inc hl
+        ld (patad+1),hl
+        ld c,a
+        and #f0
+        ld (notcnt+1),a
+        ld a,c
+        and #f
+        ld c,a
+        ld b,0
+        ld hl,SAMPAD
+        add hl,bc
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        ld (playt+1),de
+playt   ld hl,0
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld c,(hl)
+        inc hl
+        ld (playt+1),hl
+        ld a,c
+        and #f
+        ld (AYREG+10),a
+        ld a,c
+        and #f0
+        rlca
+        rlca
+        rlca
+        rlca
+        ld (AYREG+6),a
+        ex de,hl
+        ld (AYREG+4),hl
+        ld a,h
+        and #f0
+        rrca
+        rrca
+        or yl
+        ld (AYREG+7),a
+        ld a,yh
+        ld (AYREG+8),a
+        call OUTAY
+
+scrchf  ld a,1          ; Vido page changer flag for Thuring machine
+        and a
+        jr nz,thucnt1
+scr1    ld a,#17
+        xor 8
+        ld (scr1+1),a
+        ld bc,#7ffd
+        out (c),a
+thucnt1 ld a,(dicnt+1)  ; Note counter for some parts
+        cp 6
+        jr nz,intc
+thucnt  ld a,0
+        inc a
+        ld (thucnt+1),a
+        cp 55
+        jr nz,intc
+        ld (thuret+1),a
+intc
+        pop iy
+        pop hl
+        pop de
+        pop bc
+        pop af
+        ei
+        ret
+
+OUTAY   ld de,#ffbf     ; Send data to AY
+        ld c,#fd
+        xor a
+        ld hl,AYREG
+AYOUT   ld b,d
+        out (c),a
+        ld b,e
+        outi
+        inc a
+        cp 13
+        jr nz,AYOUT
+        ld a,(dicnt+1)
+        cp 5
+        ret nz
+        ld a,13
+        ld b,d
+        out (c),a
+        ld b,e
+        inc a
+        out (c),a
+        ret
+
+; Repeat data block. C - length,
+; B - how many times to repeat (decreased by 1)
+AREPEAT ld a,b
+        ld b,0
+        push de
+        push bc
+        ldir
+        pop bc
+        pop hl
+AREP1   push bc
+        ldir
+        pop bc
+        dec a
+        jr nz,AREP1
+        ret
+
+; Change page without changing current videopage
+PAGE    ld bc,#7ffd
+        or xl
+        out (c),a
+        ret
+
+; Clear screen routine for Thuring machine.
+CLS1    ld hl,#584f
+        ld c,16
+THURC   push hl
+        halt
+        halt
+        ld b,22
+THURC1  ld e,#40
+        ld (hl),e
+        set 7,h
+        ld (hl),e
+        ld d,l
+        ld a,l
+        cpl
+        xor l
+        and #1f
+        xor l
+        ld l,a
+        ld (hl),e
+        res 7,h
+        ld (hl),e
+        ld l,d
+        ld de,#20
+        add hl,de
+        djnz THURC1
+        pop hl
+        dec l
+        dec c
+        jr nz,THURC
+        ld de,#4040
+
+; Clear both videopages
+CLS     ld a,#17
+        call PAGE
+        ld hl,#5aff
+        call CLSa
+        ld h,#da
+        ld e,d
+CLSa    ld bc,#c003
+        ld (hl),e
+        dec hl
+        djnz $-2
+        dec c
+        jr nz,$-5
+        xor a
+        ld l,a
+        dec hl
+        ld bc,16
+        ld (hl),a
+        dec hl
+        djnz $-2
+        dec c
+        jr nz,$-5
+        ld c,8
+CLSb    ld b,#c0
+        ld (hl),a
+        dec hl
+        djnz $-2
+        ld l,a
+        dec hl
+        dec c
+        jr nz,CLSb
+        ret
+
+; Chunky engine
+CHUNKEN ld (CHENS+1),sp
+        ld bc,#7ffd
+        ld a,xh
+        xor 10
+        out (c),a
+        ld xh,a
+        and 8
+        ld xl,a
+CHUNKEB ld sp,CHBUF
+        ld de,CHUNKE1
+        exx
+        ld de,#c080
+        jr CHUNKT
+CHUNKE1 ld de,#c800
+        ld b,CHGFX/256
+        exx
+        ld de,CHUNKE2
+        ld b,8
+        jr CHUNKT+5
+CHUNKE2 ld de,CHENS
+        exx
+        ld de,#d000
+CHUNKT  ld b,CHGFX/256
+        exx
+        ld b,4
+CHUNKT1 ld hl,CHENR
+        exx
+        jp CHLINE
+CHENR   ld hl,CHENR1
+        exx
+        ld hl,#3e1
+        add hl,de
+        ex de,hl
+        jp CHLINE
+CHENR1  exx:inc e
+        dec d:dec d:dec d:dec d:exx
+        djnz CHUNKT1
+        ex de,hl
+        jp (hl)
+CHENS   ld sp,0
+        ret
+
+; "Blur" routine
+BLUR    ld iy,TBUF+64
+BLUR1   ld hl,TBUF1+64
+BLUR2   ld bc,TBUF2+64
+        push ix
+        ld (BLUR1+1),iy
+        ld (BLUR2+1),hl
+        ld (BLUR+2),bc
+        ld d,BLURTB/256
+        ld ix,CHBUF+64
+        exx
+        ld b,30
+BLUR3   exx
+        call BLURL
+        exx
+        djnz BLUR3
+        pop ix
+        ret
+
+; Make fade-out and "blur" tables
+FADBLT  ld hl,FADETAB
+        ld a,#b0
+        ld (hl),a
+        inc l
+        ld (hl),a
+        inc l
+        ld (hl),a
+        inc l
+        inc a
+        cp #bf
+        jr nz,$-5
+        ld b,#4f
+        ld (hl),a
+        inc l
+        djnz $-2
+        ld a,#b0      ; Make "blur" tab
+        ld c,40
+        ld b,2
+        ld (hl),a
+        inc l
+        djnz $-2
+        inc a
+        dec c
+        jr nz,$-8
+        ret
+
+; Depack 2-bit double-delta data to 8-bit table
+INS1    ld c,e
+        ld b,e
+        ld a,e
+        and 3
+        jr nz,$+3
+        inc hl
+        xor a
+        rlc (hl)
+        rla
+        rlc (hl)
+        rla
+        dec a
+        add a,b
+        ld b,a
+        add a,c
+        ld c,a
+        ld (de),a
+        bit 6,e
+        ret nz
+        inc e
+        jr INS1+2
+        
+; Depack 4-bit double-delta data to 16-bit table
+INTG2   rld
+        and #f
+        push hl
+        ld l,a
+        ld h,0
+        add hl,bc
+        ld c,l
+        ld b,h
+        add hl,de
+        ld d,h
+        ld e,l
+        push hl
+        exx
+        pop de
+        ld (hl),d
+        dec l
+        ld (hl),e
+        dec l
+        ld a,l
+        exx
+        pop hl
+        ret
+
+; HL=A*DE (uses precalculated multiplication table)
+MUL_ADE rlca
+        rlca
+        rlca
+        rlca
+        ld l,a
+        and #f
+        add a,MULB
+        ld h,a
+        ld a,l
+        and #f0
+        ld l,a
+        push hl
+        ld hl,0
+        ret
+
+; Small routines for 3D auto-pilot
+AP_TL   dec e    ; Turn left
+        dec e
+        ret
+AP_TR   inc e    ; Turn right
+        inc e
+        ret
+AP_LF   ld a,l   ; Move left
+        sub 8
+        ld l,a
+        ret nc
+        dec d
+        ret
+AP_RG   ld a,l   ; Move right
+        add a,8
+        ld l,a
+        ret nc
+        inc d
+        ret
+AP_UP   ld a,h   ; Move up
+        sub 8
+        ld h,a
+        ret nc
+        ld a,d
+        sub 16
+        ld d,a
+        ret
+AP_DW   ld a,h   ; Move down
+        add a,8
+        ld h,a
+        ret nc
+        ld a,d
+        add a,16
+        ld d,a
+        ret
+
+; Calculate data for zoomrotator
+ROTCLC  ld hl,TBUF1     ; Clear chunky buffers
+        ld de,TBUF1+1
+        ld bc,#fff
+        ld (hl),CHB
+        ldir
+        ld hl,SKYLP     ; Build zoomrotator inner loop
+        ld de,SKYEND
+        ld bc,#3f0c
+        call AREPEAT
+        ld a,#c9
+        ld (de),a
+        inc de
+        ld hl,FADELP    ; Build fade-out inner loop
+        ld bc,#3f0c
+        call AREPEAT
+        ld a,#c9
+        ld (de),a
+        ld hl,CHBUF
+        ld (CHUNKEB+1),hl
+RTXT    ld hl,DEMMAL     ; Calculate texture for rotator
+        ld de,SKYTEX
+        ld a,32
+P31     ex af,af'
+        ld a,(hl)
+        push hl
+        call LADDR
+        ld c,16
+P32     ld a,(hl)
+        rra
+        or (hl)
+        ex de,hl
+        ld b,8
+P33     rlca
+        jr c,$+9
+        ld (hl),#b0
+        inc l
+        ld (hl),#b0
+        jr $+7
+        ld (hl),#bf
+        inc l
+        ld (hl),#bf
+        inc l
+        djnz P33
+        ld a,c
+        ld c,#f0
+        add hl,bc
+        ex de,hl
+        ld c,a
+        bit 0,c
+        jr z,$+3
+        inc l
+        dec c
+        jr nz,P32
+        ex de,hl
+        ld bc,#ff90
+        ld a,l
+        cp #70
+        jr z,$+5
+        ld bc,#f010
+        add hl,bc
+        ex de,hl
+        pop hl
+        inc hl
+        ex af,af'
+        dec a
+        jr nz,P31
+        ld hl,SKYTEX
+        ld a,64
+P34     ld d,h
+        ld e,#80
+        ld b,l
+        ld c,e
+        ldir
+        ex de,hl
+        dec a
+        jr nz,P34
+        ld hl,ROTATAB ; Calculate rotation table
+        ld de,COSINE
+        ld b,17
+P35     ld a,(de)
+        ld (hl),a
+        inc l
+        ld (hl),0
+        inc l
+        ld c,e
+        ld a,#40
+        sub e
+        ld e,a
+        ld a,(de)
+        ld (hl),a
+        inc l
+        ld (hl),0
+        inc l
+        ld a,c
+        add a,4
+        ld e,a
+        djnz P35
+        ld b,16
+        ld l,0
+P36     ld e,(hl)
+        inc l
+        ld d,(hl)
+        call NEGDE
+        ld c,l
+        ld a,130
+        sub l
+        ld l,a
+        ld (hl),d
+        dec l
+        ld (hl),e
+        ld l,c
+        inc l
+        ld e,(hl)
+        inc l
+        ld d,(hl)
+        ld c,l
+        ld a,134
+        sub l
+        ld l,a
+        ld (hl),d
+        dec l
+        ld (hl),e
+        ld l,c
+        inc l
+        djnz P36
+        ld l,0
+        ld b,64
+P37     ld e,(hl)
+        inc l
+        ld d,(hl)
+        call NEGDE
+        set 7,l
+        ld (hl),d
+        dec l
+        ld (hl),e
+        res 7,l
+        inc l
+        inc l
+        djnz P37
+        ld l,0
+P3A     ld c,(hl)
+        inc l
+        ld b,(hl)
+        inc l
+        ld e,(hl)
+        inc l
+        ld d,(hl)
+        push hl
+        ex de,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        push hl
+        ex de,hl
+        ld l,c
+        ld h,b
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        ld c,l
+        ld b,h
+        add hl,hl
+        ex de,hl
+        and a
+        sbc hl,de
+        ld l,h
+        rlc h
+        sbc a,a
+        ld h,a
+        ld (P38+1),hl
+        pop hl
+        add hl,hl
+        add hl,bc
+        ex de,hl
+        call NEGDE
+        ld l,d
+        rlc d
+        sbc a,a
+        ld h,a
+        ld (P39+1),hl
+        pop hl
+        inc h
+P39     ld de,0
+        ld (hl),d
+        dec l
+        ld (hl),e
+        dec l
+P38     ld de,0
+        ld (hl),d
+        dec l
+        ld (hl),e
+        dec h
+        ld a,l
+        add a,4
+        ld l,a
+        jr nz,P3A
+P3C     ld a,(hl)
+        inc l
+        rrc (hl)
+        rra
+        dec l
+        ld (hl),a
+        inc l
+        inc l
+        jr nz,P3C
+        ret
+
+; Zoomrotator routine
+ROTATER ld a,#10
+        call PAGE
+P3ANG   ld hl,ROTATAB
+        ld a,l
+P3RSPD  sub 4
+        ld l,a
+        ld (P3ANG+1),a
+        ld e,(hl)
+        inc l
+        ld d,(hl)
+        inc l
+        push hl
+P3FL1   ld c,0
+        rrc c
+P3MAGN  ld a,0
+P3CHC   jr c,P3D
+        add a,4
+        cp #b0
+        jr nz,P3E
+        sub 4
+        dec c
+        jr P3E
+P3D     sub 4
+        jr nz,P3E
+        add a,4
+        inc c
+P3E     ld (P3MAGN+1),a
+        call MUL_ADE
+        ld a,c
+        ld (P3FL1+1),a
+        ld l,h
+        ld h,d
+        add hl,hl
+        add hl,hl
+        ld (P3DX+1),hl
+        pop hl
+        ld e,(hl)
+        inc l
+        ld d,(hl)
+        push hl
+        ld a,(P3MAGN+1)
+        call MUL_ADE
+        ld l,h
+        ld h,d
+        add hl,hl
+        add hl,hl
+        ld (P3DY+1),hl
+        pop hl
+        inc h
+        ld d,(hl)
+        dec l
+        ld e,(hl)
+        push hl
+        ld a,(P3MAGN+1)
+        call MUL_ADE
+        add hl,hl
+P3MY1   ld a,#20
+        add a,h
+        ld h,a
+        ld (P3MY+1),hl
+        pop hl
+        dec l
+        ld d,(hl)
+        dec l
+        ld e,(hl)
+        ld a,(P3MAGN+1)
+        call MUL_ADE
+        add hl,hl
+P3MX1   ld a,#40
+        add a,h
+        ld h,a
+P3DX    ld bc,0
+        exx
+P3MY    ld hl,0
+P3DY    ld bc,0
+        ld de,TBUF1
+        ld a,32
+P3LP1   ex af,af'
+        exx
+        push hl
+        exx
+        push hl
+        call SKYEND
+        jr nz,$+3
+        inc d
+        ex af,af'
+        pop hl
+        exx
+        pop hl
+        exx
+        push de
+        push bc
+        exx
+        pop de
+        and a
+        sbc hl,de
+        push bc
+        exx
+        pop de
+        add hl,de
+        pop de
+        dec a
+        jr nz,P3LP1
+        ld de,TBUF1
+        ld hl,TBUF2
+        ld iy,CHBUF
+        ld b,FADETAB/256
+        ld a,32
+P3LP2   ex af,af'
+        call FADELN
+        jr nz,$+6
+        inc h
+        inc yh
+        inc d
+        ex af,af'
+        dec a
+        jr nz,P3LP2
+        halt
+        jp CHUNKEN
+
+; Fire routine
+FIRER   ld hl,CHBUF+64
+        ld d,FIRETB/256
+P5S1    ld yh,TBUF1/256
+P5S2    ld a,TBUF2/256
+        ld b,a
+        ld (P5S1+2),a
+        ld a,yh
+        ld (P5S2+1),a
+        ld yl,#80
+        ld c,#40
+        ld a,30
+P59     ex af,af'
+        call FIREL
+        ex af,af'
+        dec a
+        jr nz,P59
+        jr FIRER-4
+
+; Inner loops
+
+; Chunky routine inner loop
+CHINLP  pop hl
+        ld c,(hl)
+        ld a,(bc):ld (de),a:inc d:inc b
+        ld a,(bc):ld (de),a:inc d:inc b
+        ld a,(bc):ld (de),a:inc d:inc b
+        ld a,(bc):ld (de),a:inc e
+        pop hl
+        ld c,(hl)
+        ld a,(bc):ld (de),a:dec d:dec b
+        ld a,(bc):ld (de),a:dec d:dec b
+        ld a,(bc):ld (de),a:dec d:dec b
+        ld a,(bc):ld (de),a:inc e
+
+; "Blur" inner loop
+BLURLP  ld a,(iy+1)
+        add a,(iy-1)
+        add a,(iy+64)
+        add a,(iy-64)
+        ld e,a
+        ld a,(de)
+        sub (hl)
+        jr nc,$+3
+        xor a
+        or #b0
+        ld (bc),a
+        ld (ix+0),a
+        inc iy
+        inc ix
+        inc hl
+        inc bc
+
+; Endings for chunky routine
+CHEND   ld hl,#c1    ; X-chunky buffer
+        add hl,sp
+        ld sp,hl
+CHEND1  exx          ; Normal buffer
+        jp (hl)
+
+CLEND   ld hl,#ff3f  ; X-chunky buffer clearing routine enging
+        add hl,sp
+        ld sp,hl
+
+; Raytracing routines
+TRACERS bit 5,(hl):jp z,sec71+2
+        add hl,de:bit 5,(hl):jp z,lsec70
+        add a,c:jr nc,$+8:inc l
+
+        bit 5,(hl):jp z,sec11
+        inc l:bit 5,(hl):jp z,lsec12
+        sub c:jr nc,$+8:add hl,de
+
+        bit 5,(hl):jp z,sec21
+        inc l:bit 5,(hl):jp z,lsec12
+        add a,c:jr nc,$+8:add hl,de
+
+        bit 5,(hl):jp z,sec31
+        add hl,de:bit 5,(hl):jp z,lsec34
+        add a,c:jr nc,$+8:inc l
+
+        bit 5,(hl):jp z,sec41
+        add hl,de:bit 5,(hl):jp z,lsec34
+        sub c:jr nc,$+8:dec l
+
+        bit 5,(hl):jp z,sec51
+        dec l:bit 5,(hl):jp z,lsec56
+        add a,c:jr nc,$+8:add hl,de
+
+        bit 5,(hl):jp z,sec61
+        dec l:bit 5,(hl):jp z,lsec56
+        sub c:jr nc,$+8:add hl,de
+
+        bit 5,(hl):jp z,sec71
+        add hl,de:bit 5,(hl):jp z,lsec70
+        sub c:jr nc,$+8:dec l
+
+; Zoomrotator inner loop
+SKYLP   add hl,bc
+        ld a,h
+        exx
+        or SKYTEX/256
+        ld d,a
+        add hl,bc
+        ld e,h
+        ld a,(de)
+        exx
+        ld (de),a
+        inc e
+
+; Fade-out inner loop
+FADELP  ld a,(de)
+        add a,(hl)
+        ld c,a
+        ld a,(bc)
+        ld (hl),a
+        ld (iy),a
+        inc l
+        inc e
+        inc yl
+
+; Fire inner loop
+FIREIL  ld a,(iy)
+        ld (hl),a
+        add a,(iy+1)
+        add a,(iy-1)
+        add a,(iy+64)
+        add a,(iy-64)
+        ld e,a
+        ld a,(de)
+        ld (bc),a
+        inc iy
+        inc hl
+        inc bc
+
+; All data:
+
+; Program for 3D-mover
+LETALKA db #21,#43,#64,#10,#24
+        db #10,#22,#25,#62,#11
+        db #44,#22,#14,#43,#15
+        db #22,0
+
+; Drum patterns
+_dpat0  db #10,#14,#26,#10,#14,#26,#10,#14,#26,#10,#14,#26
+        db #10,#14,#26,#10,#14,#26,#10,#14,#26,#10,#14,#26
+        db #10,#14,#26,#10,#14,#26,#10,#14,#26,#10,#12,#16
+        db #12,#10,#14,#26,#10,#14,#26
+        db #10,#12,#16,#10,#12,#16,#12,#12,#80
+_dpat1  db #10,#14,#26,#12,#14,#26,#10,#14,#26,#12,#14,#26
+        db #10,#14,#26,#12,#14,#26,#10,#14,#26,#12,#14,#16,#10,#80
+_dpat2  db #10,#14,#28,#22,#18,#10,#14,#16,#20,#22,#18
+        db #10,#20,#28,#22,#28,#10,#10,#18,#12
+        db #10,#14,#12,#16,#80
+_dpat3  db #10,#16,#10,#14,#22,#18,#14,#16
+        db #12,#10,#10,#22,#14,#18,#10,#10
+        db #14,#18,#12,#16,#12,#12,#18,#12
+        db #10,#16,#10,#18,#22,#80
+_dpat4  db #20,#28,#22,#18,#12,#20,#28,#22
+        db #28,#20,#28,#22,#28,#10,#12
+        db #28,#22,#28,#80
+_dpat5  db #10,#10,#16,#14,#12,#14,#16,#10
+        db #10,#14,#10,#18,#12,#14,#16,#12
+        db #10,#10,#14,#16,#12,#14,#16,#10
+        db #10,#12,#10,#18,#12,#16,#10,#16,#80
+_dpat6  db #10,#14,#14,#14,#10,#14,#14,#14
+        db #10,#14,#14,#14,#10,#14,#14,#14
+        db #10,#14,#14,#14,#10,#14,#14,#14
+        db #10,#14,#14,#14,#10,#14,#10,#14,#80
+
+; Text messages (all symbols are multiplied by 2)
+S_CAFE  db 134,130,140,202,114,114,0            ; CAFe99
+ST_1    db #cc,CHBUF/256,154,138,142,170,166,0  ; MEGUS
+        db #18,CHBUF/256+3,158,140,0            ; OF
+        db #48,CHBUF/256+5,132,174,94,176,160,148,0  ; BW/XPJ
+        db 1,#c8,CHBUF/256,132,164,146,156,142,166,0 ; BRINGS
+        db #14,CHBUF/256+5,178,158,170,0             ; YOU
+        db 1,1,8,CHBUF/256+3,154,130,152,130,136,178,0 ; MALADY
+        db 8,CHBUF/256+3,154,130,152,130,136,178,0
+        db 1,#14,CHBUF/256+1,168,144,138,0   ; THE
+        db 0,CHBUF/256+3,134,158,156,168,164,146,90,0 ; CONTRI-
+        db #10,CHBUF/256+5,132,170,168,146,158,156,0 ; BUTION
+        db 1,#14,CHBUF/256+3,140,158,164,0 ; FOR
+        db #ff
+
+MALEP   db #4c,TBUF1/256+3,152,146,140,138,0 ; LIFE
+        db #62,TBUF1/256+4,146,166,0         ; IS
+        db #20,TBUF1/256+2,168,144,138,0     ; THE
+        db #48,TBUF1/256+3,154,130,152,130,136,178,0 ; MALADY
+        db #48,TBUF1/256+3,154,130,152,130,136,178,0
+        db #1f,TBUF1/256+1,146,168,0 ; IT
+        db #14,TBUF1/256+2,150,146,152,152,166,0 ; KILLS
+        db #58,TBUF1/256+4,170,166,0 ; US
+        db #58,TBUF1/256+4,170,166,0
+        db #ff
+
+DEMMAL  db #40,#40,136,138,154,158,#40,#40 ;  DEMO
+        db #40,154,130,150,146,156,142,#40 ; MAKING
+        db #40,146,166,#40,168,144,138,#40 ; IS THE
+        db #40,154,130,152,130,136,178,#40 ; MALADY
+
+FINTX   db 168,144,138,#40,138,156,136,#40 ; THE_END
+        db #40,#40,#40,#40,#40,#40,#40,#40
+        db #40,#40,#40,#40,#40,#40,#40,#40
+        db #40,#40,#40,#40,#40,#40,#40,#40
+
+MALSTR  dw "M"*8+#3c00,"A"*8+#3c00,"L"*8+#3c00
+        dw "A"*8+#3c00,"D"*8+#3c00,"Y"*8+#3c00
+
+; The order of thurmits and their colours
+THTAB   dw #4546,THURM3,#4344,THURM1,#4145,THURM2,#4247,THURM6
+        dw #444,THURM4,#4541,THURM5
+
+; Thurmits' logic
+THURM1  dw _th1a,_th1b,_th1c,_th1d
+_th1a   db #14,4,#44,6,#84,2,#c4,2
+_th1b   db 8,0,#58,0,#f8,0,#a8,0
+_th1c   db #10,0,#70,0,#e0,0,#80,0
+_th1d   db 4,2,#54,2,#f4,2,#a4,2
+
+THURM2  dw _th2a,_th2b
+_th2a   db #14,2,#60,2,#a4,2
+_th2b   db #38,0,#a4,0,#e8,0
+
+THURM3  dw _th3a,_th3b
+_th3a   db #24,2
+_th3b   db #28,2,#90,2,#48,2
+
+THURM4  dw _th4a,_th4b
+_th4a   db #18,0,#68,2,#88,2
+_th4b   db #10,0,#50,0,#90,0
+
+THURM5  dw _th5a,_th5b,_th5c,_th5d,_th5e
+_th5a   db #34,6,#c4,2
+_th5b   db 0,8,#a8,0,#f8,8,#58,8
+_th5c   db #30,8,#d0,0,#60,0,#80,0
+_th5d   db #20,0,#b0,0,#d0,0,#40,0
+_th5e   db #34,4,#f4,2
+
+THURM6  dw _th6a,_th6b,_th6e,_th5d
+_th6a   db #34,6,#44,2,#84,2,#c4,2
+_th6b   db 8,4,#58,4,#a8,0,#f8,4
+_th6d   db 20,0,#b0,0,#d0,0,#40,0
+_th6e   db #34,6,#54,2,#a4,2,#f4,2
+
+; Brick texture
+TEXTR1  db #00,#00,#00,#00,#0c,#dc,#eb,#80
+        db #0a,#cc,#cc,#b0,#0c,#dc,#eb,#80
+        db #0c,#dd,#dd,#80,#0c,#dc,#eb,#80
+        db #0c,#dc,#cc,#80,#0c,#dc,#eb,#80
+        db #0c,#dc,#eb,#80,#0c,#dc,#eb,#80
+        db #0c,#dc,#eb,#80,#0c,#dc,#bb,#80
+        db #0c,#dc,#eb,#80,#0b,#88,#88,#60
+        db #0c,#dc,#eb,#80,#00,#00,#00,#00
+        db #0c,#dc,#eb,#80,#00,#00,#00,#00
+        db #0c,#dc,#eb,#80,#0a,#cc,#cc,#b0
+        db #0c,#dc,#eb,#80,#0c,#dd,#dd,#80
+        db #0c,#dc,#eb,#80,#0c,#dc,#cc,#80
+        db #0c,#dc,#eb,#80,#0c,#dc,#eb,#80
+        db #0c,#dc,#bb,#80,#0c,#dc,#eb,#80
+        db #0b,#88,#88,#60,#0c,#dc,#eb,#80
+        db #00,#00,#00,#00,#0c,#dc,#eb,#80
+; Block texture
+TEXTR2  ds 8
+        db #0f,#ff,#ff,#ff,#ff,#ff,#ff,#f0
+        db #0f,#99,#9a,#ce,#dc,#99,#9a,#b0
+        db #0f,#95,#5a,#ce,#dc,#95,#5a,#b0
+        db #0f,#95,#5a,#ce,#dc,#95,#5a,#b0
+        db #0f,#aa,#aa,#ce,#dc,#aa,#aa,#b0
+        db #0f,#cc,#cc,#ce,#dc,#cc,#cc,#b0
+        db #0f,#ee,#ee,#ee,#dd,#dd,#dd,#b0
+        db #0f,#dd,#dd,#dd,#ee,#ee,#ee,#b0
+        db #0f,#cc,#cc,#cd,#ec,#cc,#cc,#b0
+        db #0f,#99,#9a,#cd,#ec,#99,#9a,#b0
+        db #0f,#95,#5a,#cd,#ec,#95,#5a,#b0
+        db #0f,#95,#5a,#cd,#ec,#95,#5a,#b0
+        db #0f,#aa,#aa,#cd,#ec,#aa,#aa,#b0
+        db #0f,#bb,#bb,#bb,#bb,#bb,#bb,#b0
+        ds 8
+
+; Drum samples addresses
+SAMPAD  dw _bassd,_snare,_clhat,_ophat
+        dw _ride
+
+; Drum samples:
+_bassd  db #68,#83,#0f,#08,#84,#0e
+        db #e8,#84,#0d,#a8,#85,#0d
+        db #68,#86,#0c,#28,#87,#0b
+        db #08,#88,#0a,#c8,#88,#09
+        db #48,#89,#08,#c8,#89,#07
+        db #c8,#8a,#06,#28,#8b,#05
+_snare  db #ba,#02,#9f,#19,#03,#4e
+        db #d8,#03,#3d,#f9,#03,#2c
+        db #10,#10,#1b,#10,#10,#0a
+        db #10,#10,#09,#10,#10,#09
+        db #10,#10,#08,#10,#10,#08
+        db #10,#10,#07,#10,#10,#07
+_clhat  db #10,#00,#0d,#10,#00,#08
+        db #10,#00,#04,#10,#00,#02
+        db #10,#00,#02,#10,#00,#02
+_ophat  db #0e,#00,#1c,#0e,#00,#0c
+        db #0e,#00,#0b,#0e,#00,#0b
+        db #0e,#00,#0a,#0e,#00,#0a
+        db #0e,#00,#09,#0e,#00,#09
+        db #0e,#00,#09,#0e,#00,#08
+        db #0e,#00,#08,#0e,#00,#08
+_ride   db #0c,#00,#0f,#0e,#00,#0d
+        db #0e,#00,#0b,#0e,#00,#0a
+        db #0e,#00,#09,#0e,#00,#08
+        db #0e,#00,#08,#0e,#00,#08
+        db #0e,#00,#08,#0e,#00,#07
+        db #0e,#00,#07,#0e,#00,#07
+
+; Scaling table (32/VSIZE*256)
+SCALTB  dw 128,137,146,158,171,186,205
+        dw 228,256,293,341,410,512,683
+        dw 1024,2048
+
+; Packed data for vertical scaling table
+VSTAB   db #c,1,1,2,1,3,2,3,4,6,7,#a
+        db #10,#1e,#44,#5a
+
+; Map for 3D-Engine
+MAPSRC  db #13,#45,#67,#81,#11,#11,#11,#11
+        db #10,#00,#00,#01,#11,#11,#11,#11
+        db #10,#00,#00,#01,#12,#20,#03,#01
+        db #10,#00,#00,#01,#12,#20,#00,#01
+        db #10,#00,#00,#01,#10,#00,#04,#01
+        db #11,#10,#01,#11,#00,#00,#00,#01
+        db #10,#00,#00,#02,#00,#00,#05,#01
+        db #10,#00,#00,#00,#00,#00,#00,#01
+        db #10,#00,#00,#00,#00,#00,#06,#01
+        db #10,#00,#00,#02,#11,#10,#00,#01
+        db #11,#11,#11,#11,#00,#10,#07,#01
+        db #11,#11,#20,#00,#00,#10,#00,#01
+        db #11,#11,#10,#00,#00,#10,#08,#01
+        db #11,#11,#20,#00,#00,#00,#00,#01
+        db #11,#11,#10,#00,#00,#00,#00,#01
+        db #11,#11,#11,#11,#11,#11,#11,#11
+
+; Packed 4-bit double-delta data for 16-bit TAN table
+TG2TAB  db #00,#02,#01,#11,#21,#22
+        db #23,#25,#36,#59,#9c
+; Unpacked TAN data
+TG_NON  dw #28bc,#145b,#d8f,#a27,#81c
+        dw #6be,#5c3,#507,#474,#3fe
+; Packed 2-bit double-delta data for 8-bit TAN table
+TGTAB   db #58,#61,#89,#55,#59,#56,#59,#66,0
+; Packed 2-bit double-delta data for 8-bit COS table
+COSTAB  db #24,#85,#52,#15,#48,#54,#88,#55
+        db #22,#15,#49,#21,#85,#55,#52,#54,#aa
+; Packed 2-bit double-delta data for 8-bit 1/COS table
+ICOSTB  db #56,#25,#59,#31,#95,#95,#56,#96,#aa
+; Packed chunk graphics
+CHUNKS  db #08,#8a,#aa,#aa,#aa,#aa,#ae,#ef  ; first line
+        db #00,#00,#04,#45,#5d,#df,#ff,#ff  ; second line
+        db #00,#22,#aa,#aa,#aa,#aa,#aa,#bf  ; third line
+        db #00,#00,#00,#11,#55,#77,#ff,#ff  ; fourth line
+
+; Brainwave logo
+BWLOGO  db 0,0,0,0,#f1,#22,#f9,#22,#1d,#b3,#cd,#b7,#f9,#b6,#fc,#da
+        db #dc,#da,#ce,#d8,#fe,#48,#fe,#48,0,0,0,0,0,0,0,0
+
+AYREG   ds 13   ; AY registers
